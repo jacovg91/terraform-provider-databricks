@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/databricks/databricks-sdk-go"
+
 	"github.com/databricks/terraform-provider-databricks/commands"
 	"github.com/databricks/terraform-provider-databricks/common"
 	"github.com/databricks/terraform-provider-databricks/provider"
@@ -67,6 +69,9 @@ type importContext struct {
 	variables         map[string]string
 	workspaceConfKeys map[string]any
 
+	workspaceClient *databricks.WorkspaceClient
+	accountClient   *databricks.AccountClient
+
 	channels map[string]resourceChannel
 
 	// mutable resources
@@ -108,12 +113,14 @@ type importContext struct {
 	groupsMutex sync.Mutex
 
 	//
-	allUsers   map[string]scim.User
-	usersMutex sync.RWMutex
+	allUsers        map[string]scim.User
+	allUsersMapping map[string]string // maps user_name -> internal ID
+	usersMutex      sync.RWMutex
 
 	//
-	allSps   map[string]scim.User
-	spsMutex sync.RWMutex
+	allSps        map[string]scim.User
+	allSpsMapping map[string]string // maps application_id -> internal ID
+	spsMutex      sync.RWMutex
 
 	//
 	importing      map[string]bool
@@ -287,16 +294,20 @@ func (ic *importContext) Run() error {
 	} else if !info.IsDir() {
 		return fmt.Errorf("the path %s is not a directory", ic.Directory)
 	}
-	w, err := ic.Client.WorkspaceClient()
-	if err != nil {
-		return err
-	}
 
 	ic.accountLevel = ic.Client.Config.IsAccountClient()
 	if ic.accountLevel {
 		ic.meAdmin = true
+		ic.accountClient, err = ic.Client.AccountClient()
+		if err != nil {
+			return err
+		}
 	} else {
-		me, err := w.CurrentUser.Me(ic.Context)
+		ic.workspaceClient, err = ic.Client.WorkspaceClient()
+		if err != nil {
+			return err
+		}
+		me, err := ic.workspaceClient.CurrentUser.Me(ic.Context)
 		if err != nil {
 			return err
 		}
